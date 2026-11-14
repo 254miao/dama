@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>打码</title>
+<style>
+:root{
+  --bg:#000; --bar:rgba(28,28,30,.92); --card:rgba(44,44,46,.9);
+  --sep:rgba(255,255,255,.09); --txt:#fff; --sub:rgba(235,235,245,.6);
+  --blue:#0a84ff; --yellow:#ffd60a; --fill:rgba(118,118,128,.24);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;
+  font-family:-apple-system,"SF Pro Text","PingFang SC",sans-serif;color:var(--txt)}
+#app{position:fixed;inset:0;display:flex;flex-direction:column}
+#stage{position:relative;flex:1;overflow:hidden;background:#000;touch-action:none}
+canvas{position:absolute;left:0;top:0;width:100%;height:100%}
+#hint{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+  text-align:center;font-size:15px;line-height:1.9;color:var(--sub);pointer-events:none;padding:0 40px}
+#hint b{display:block;font-size:19px;color:#fff;margin-bottom:6px;font-weight:600;letter-spacing:.2px}
+/* iOS 导航条 */
+#top{position:absolute;top:0;left:0;right:0;height:56px;padding:0 12px;padding-top:env(safe-area-inset-top);
+  display:flex;align-items:center;justify-content:space-between;
+  background:linear-gradient(rgba(0,0,0,.7),rgba(0,0,0,0));z-index:5}
+#top .t{font-size:17px;font-weight:600;letter-spacing:.3px}
+#top button{border:0;background:var(--fill);color:var(--blue);height:34px;padding:0 15px;border-radius:17px;
+  font-size:15px;font-weight:600;backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px)}
+#top button:active{opacity:.55}
+/* iOS 底部工具条 */
+#bar{background:var(--bar);padding:10px 0 calc(10px + env(safe-area-inset-bottom));
+  backdrop-filter:blur(30px);-webkit-backdrop-filter:blur(30px);border-top:.5px solid var(--sep)}
+.row{display:flex;gap:8px;padding:0 12px}
+.row+.row{margin-top:9px}
+.btn{flex:1;height:44px;border-radius:12px;border:0;background:var(--card);color:#fff;
+  font-size:14px;font-weight:590;display:flex;align-items:center;justify-content:center;
+  transition:transform .1s,background .15s}
+.btn:active{transform:scale(.95)}
+.btn.on{background:var(--yellow);color:#000}
+.btn.save{background:var(--blue);color:#fff;font-weight:650}
+.btn.dim{background:rgba(255,255,255,.05);color:rgba(255,255,255,.3)}
+.seg{display:flex;flex:1;height:40px;border-radius:12px;background:var(--card);overflow:hidden;padding:3px;gap:3px}
+.seg button{flex:1;border:0;background:transparent;color:#fff;font-size:13px;font-weight:590;border-radius:9px}
+.seg button.on{background:rgba(255,255,255,.92);color:#000}
+.hide{display:none!important}
+/* 提示弹窗 iOS 风 */
+#mask{position:fixed;inset:0;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;z-index:20;
+  backdrop-filter:blur(2px)}
+#mask.hide{display:none}
+.dlg{width:274px;background:rgba(50,50,52,.96);border-radius:14px;padding:20px 18px 16px;text-align:center;
+  backdrop-filter:blur(30px)}
+.dlg .m{font-size:14px;color:rgba(235,235,245,.85);line-height:1.6;margin-bottom:18px}
+.dlg button{width:100%;height:44px;border-radius:11px;border:0;background:var(--blue);color:#fff;
+  font-weight:650;font-size:16px}
+#toast{position:fixed;left:50%;bottom:140px;transform:translateX(-50%) scale(.9);
+  background:rgba(255,255,255,.96);color:#000;padding:11px 20px;border-radius:22px;
+  font-size:14px;font-weight:600;opacity:0;transition:.2s;z-index:30;pointer-events:none}
+#toast.show{opacity:1;transform:translateX(-50%) scale(1)}
+input[type=file]{display:none}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="hint"><b>选一张照片</b>在要遮的地方用手指涂一涂<br>马赛克会自动上色</div>
+    <div id="top">
+      <span class="t">打码</span>
+      <button id="add">＋ 选照片</button>
+    </div>
+  </div>
+
+  <div id="bar">
+    <div class="row">
+      <button class="btn on" id="bMosaic">马赛克</button>
+      <button class="btn" id="bDraw">涂黑</button>
+      <button class="btn" id="bText">文字</button>
+      <button class="btn" id="bUndo">撤销</button>
+    </div>
+    <div class="row">
+      <div class="seg" id="segSize">
+        <button data-v="0.05">细</button>
+        <button class="on" data-v="0.09">中</button>
+        <button data-v="0.15">粗</button>
+      </div>
+      <button class="btn dim" id="bCrop" style="max-width:74px">裁剪</button>
+      <button class="btn dim" id="bRot" style="max-width:74px">旋转</button>
+      <button class="btn save" id="bSave" style="max-width:80px">保存</button>
+    </div>
+  </div>
+</div>
+<div id="mask" class="hide"><div class="dlg"><div class="m" id="dlgMsg"></div><button id="dlgOk">好</button></div></div>
+<div id="toast"></div>
+<input type="file" id="picker" accept="image/*">
+<script>
+(function(){
+'use strict';
+var cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+var stage=document.getElementById('stage'), hint=document.getElementById('hint');
+var W=0,H=0, dpr=Math.min(window.devicePixelRatio||1,3);
+var cvPixW=0, cvPixH=0;
+var img=null;                 // 原始图 canvas
+var view={s:1,x:0,y:0};       // 显示变换
+var mode='mosaic';            // mosaic | draw | text | crop
+var brush=0.09;               // 笔刷粗细(占图宽比例)
+var strokes=[];               // {t:'m'|'d', size, pts:[[x,y],...]}
+var cur=null;
+var crop={x:0.04,y:0.04,w:0.92,h:0.92}, cropDrag=0, lastN=null;
+var maskCanvas=null;          // 缓存马赛克层
+
+function toast(s){var t=document.getElementById('toast');t.textContent=s;t.classList.add('show');
+  clearTimeout(t._h);t._h=setTimeout(function(){t.classList.remove('show')},1500);}
+function dlg(s){document.getElementById('dlgMsg').innerHTML=s;document.getElementById('mask').classList.remove('hide');}
+document.getElementById('dlgOk').onclick=function(){document.getElementById('mask').classList.add('hide')};
+
+/* ---------- 尺寸 ---------- */
+function resize(){
+  var r=stage.getBoundingClientRect();
+  W=r.width; H=r.height;
+  cv.width=Math.round(W); cv.height=Math.round(H);
+  cvPixW=cv.width; cvPixH=cv.height;
+  cv.style.width=W+'px'; cv.style.height=H+'px';
+  ctx.setTransform(1,0,0,1,0,0);
+  fit(); draw();
+}
+function fit(){
+  if(!img)return;
+  var s=Math.min(W/img.width, H/img.height);
+  view.s=s; view.x=(W-img.width*s)/2; view.y=(H-img.height*s)/2;
+}
+window.addEventListener('resize',resize);
+window.addEventListener('orientationchange',function(){setTimeout(resize,300)});
+
+/* ---------- 马赛克层 ---------- */
+function buildMask(){
+  if(!img){maskCanvas=null;return;}
+  var iw=img.width, ih=img.height;
+  var cell=Math.max(4, Math.round(iw*Math.max(brush,0.02)*0.55));
+  var tw=Math.max(1,Math.round(iw/cell)), th=Math.max(1,Math.round(ih/cell));
+  var small=document.createElement('canvas');
+  small.width=tw; small.height=th;
+  var g=small.getContext('2d');
+  g.imageSmoothingEnabled=true;
+  g.drawImage(img,0,0,tw,th);
+  var out=document.createElement('canvas');
+  out.width=iw; out.height=ih;
+  var o=out.getContext('2d');
+  o.imageSmoothingEnabled=false;
+  o.drawImage(small,0,0,tw,th,0,0,iw,ih);
+  maskCanvas=out;
+}
+// brush 改变时重建
+var lastBrush=-1;
+function ensureMask(){ if(mode==='mosaic' && lastBrush!==brush){ lastBrush=brush; buildMask(); } }
+
+/* ---------- 绘制 ---------- */
+function ptPath(g, st, iw, ih){
+  g.beginPath();
+  var p=st.pts;
+  if(p.length===1){
+    var r=st.size*iw/2;
+    g.arc(p[0][0]*iw, p[0][1]*ih, r, 0, Math.PI*2);
+    return true; // 圆点
+  }
+  g.moveTo(p[0][0]*iw, p[0][1]*ih);
+  for(var i=1;i<p.length;i++) g.lineTo(p[i][0]*iw, p[i][1]*ih);
+  return false;
+}
+
+function draw(){
+  ctx.setTransform(1,0,0,1,0,0);
+  ctx.clearRect(0,0,cv.width,cv.height);
+  if(!img)return;
+  var iw=img.width*view.s, ih=img.height*view.s;
+  ctx.drawImage(img, view.x, view.y, iw, ih);
+
+  // ---------- 马赛克: 对已经画好的画布做局部块平均 ----------
+  var ms=[];
+  for(var q=0;q<strokes.length;q++) if(strokes[q].t==='m') ms.push(strokes[q]);
+  if(cur && cur.t==='m') ms.push(cur);
+
+  if(ms.length){
+    var bs=Math.max(8, Math.round(iw*0.045));        // 块边长(显示像素)
+    var imgData=ctx.getImageData(0,0,cv.width,cv.height);
+    var d=imgData.data, W2=cv.width, H2=cv.height;
+
+    // 先把每个笔画覆盖到的块号收集起来
+    var blocks={};
+    function addBlock(bx,by){
+      if(bx<0||by<0)return;
+      if(bx*bs>=W2||by*bs>=H2)return;
+      blocks[by*4096+bx]=1;
+    }
+    for(var s1=0;s1<ms.length;s1++){
+      var st=ms[s1];
+      var r=Math.max(4, st.size*iw/2);
+      for(var p1=0;p1<st.pts.length;p1++){
+        var X=view.x+st.pts[p1][0]*iw, Y=view.y+st.pts[p1][1]*ih;
+        var bx0=Math.floor((X-r)/bs), bx1=Math.floor((X+r)/bs);
+        var by0=Math.floor((Y-r)/bs), by1=Math.floor((Y+r)/bs);
+        for(var by=by0;by<=by1;by++){
+          for(var bx=bx0;bx<=bx1;bx++){
+            var cxm=bx*bs+bs/2, cym=by*bs+bs/2;
+            if(Math.hypot(cxm-X,cym-Y) <= r+bs*0.75) addBlock(bx,by);
+          }
+        }
+        // 点与点之间补
+        if(p1>0){
+          var pp=st.pts[p1-1];
+          var X0=view.x+pp[0]*iw, Y0=view.y+pp[1]*ih;
+          var dist=Math.hypot(X-X0,Y-Y0);
+          var steps=Math.max(1,Math.ceil(dist/(r*0.5)));
+          for(var k3=1;k3<steps;k3++){
+            var tt=k3/steps;
+            var MX=X0+(X-X0)*tt, MY=Y0+(Y-Y0)*tt;
+            var b0=Math.floor((MX-r)/bs), b1=Math.floor((MX+r)/bs);
+            var c0=Math.floor((MY-r)/bs), c1=Math.floor((MY+r)/bs);
+            for(var cy2=c0;cy2<=c1;cy2++)
+              for(var cx2=b0;cx2<=b1;cx2++){
+                if(Math.hypot(cx2*bs+bs/2-MX, cy2*bs+bs/2-MY) <= r+bs*0.75) addBlock(cx2,cy2);
+              }
+          }
+        }
+      }
+    }
+
+    // 对每个块取平均色并填充
+    for(var key in blocks){
+      var bxi=key%4096, byi=(key/4096)|0;
+      var sx=bxi*bs, sy=byi*bs;
+      var ex=Math.min(sx+bs,W2), ey=Math.min(sy+bs,H2);
+      if(ex<=sx||ey<=sy)continue;
+      var R=0,G=0,B=0,n=0;
+      for(var yy=sy;yy<ey;yy++){
+        for(var xx=sx;xx<ex;xx++){
+          var o=(yy*W2+xx)*4;
+          R+=d[o]; G+=d[o+1]; B+=d[o+2]; n++;
+        }
+      }
+      if(!n)continue;
+      R=(R/n)|0; G=(G/n)|0; B=(B/n)|0;
+      for(var yy2=sy;yy2<ey;yy2++){
+        for(var xx2=sx;xx2<ex;xx2++){
+          var o2=(yy2*W2+xx2)*4;
+          d[o2]=R; d[o2+1]=G; d[o2+2]=B; d[o2+3]=255;
+        }
+      }
+    }
+    ctx.putImageData(imgData,0,0);
+  }
+
+  // ---------- 涂黑 ----------
+  ctx.save();
+  ctx.fillStyle=ctx.strokeStyle='#000';
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  function black(st){
+    ctx.lineWidth=Math.max(3, st.size*iw);
+    ctx.beginPath();
+    if(st.pts.length===1){
+      ctx.arc(view.x+st.pts[0][0]*iw, view.y+st.pts[0][1]*ih, st.size*iw/2,0,7); ctx.fill();
+    }else{
+      ctx.moveTo(view.x+st.pts[0][0]*iw, view.y+st.pts[0][1]*ih);
+      for(var b2=1;b2<st.pts.length;b2++) ctx.lineTo(view.x+st.pts[b2][0]*iw, view.y+st.pts[b2][1]*ih);
+      ctx.stroke();
+    }
+  }
+  for(var d1=0;d1<strokes.length;d1++){ if(strokes[d1].t==='d') black(strokes[d1]); }
+  if(cur && cur.t==='d') black(cur);
+  ctx.restore();
+
+  // ---------- 文字 ----------
+  ctx.save();
+  for(var t1=0;t1<strokes.length;t1++){
+    var st2=strokes[t1];
+    if(st2.t!=='t')continue;
+    var fs=st2.size*ih;
+    ctx.font='bold '+fs+'px -apple-system,"PingFang SC",sans-serif';
+    ctx.textAlign='center'; ctx.textBaseline='middle';
+    var tx=view.x+st2.pts[0][0]*iw, ty=view.y+st2.pts[0][1]*ih;
+    ctx.lineWidth=Math.max(2,fs*0.14); ctx.strokeStyle='rgba(0,0,0,.5)';
+    ctx.strokeText(st2.text,tx,ty);
+    ctx.fillStyle='#fff'; ctx.fillText(st2.text,tx,ty);
+  }
+  ctx.restore();
+
+  // ---------- 裁剪框 ----------
+  if(mode==='crop'){
+    var cx=view.x+crop.x*iw, cy=view.y+crop.y*ih, cw=crop.w*iw, ch=crop.h*ih;
+    ctx.save();
+    ctx.fillStyle='rgba(0,0,0,.62)';
+    ctx.fillRect(view.x,view.y,iw,cy-view.y);
+    ctx.fillRect(view.x,cy+ch,iw,view.y+ih-(cy+ch));
+    ctx.fillRect(view.x,cy,cx-view.x,ch);
+    ctx.fillRect(cx+cw,cy,view.x+iw-(cx+cw),ch);
+    ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.strokeRect(cx,cy,cw,ch);
+    ctx.restore();
+  }
+}
+
+/* ---------- 触摸 ---------- */
+function pos(e){
+  var r=stage.getBoundingClientRect();
+  var p=(e.touches&&e.touches[0])||(e.changedTouches&&e.changedTouches[0])||e;
+  return {x:p.clientX-r.left, y:p.clientY-r.top};
+}
+function norm(p){
+  var iw=img.width*view.s, ih=img.height*view.s;
+  var px=view.x*dpr, py=view.y*dpr, pwd=iw*dpr, phd=ih*dpr;
+  return {x:Math.max(0,Math.min(1,(p.x-view.x)/iw)), y:Math.max(0,Math.min(1,(p.y-view.y)/ih))};
+}
+
+stage.addEventListener('touchstart',function(e){
+  if(!img)return;
+  e.preventDefault();
+  var n=norm(pos(e)); lastN=n;
+  if(mode==='crop'){
+    var dx0=Math.abs(n.x-crop.x),dx1=Math.abs(n.x-(crop.x+crop.w));
+    var dy0=Math.abs(n.y-crop.y),dy1=Math.abs(n.y-(crop.y+crop.h));
+    cropDrag=0;
+    if(dx0<.07)cropDrag=1;else if(dx1<.07)cropDrag=2;
+    else if(dy0<.07)cropDrag=3;else if(dy1<.07)cropDrag=4;
+    else if(n.x>crop.x&&n.x<crop.x+crop.w&&n.y>crop.y&&n.y<crop.y+crop.h)cropDrag=5;
+    return;
+  }
+  if(mode==='text'){
+    var s=prompt('请输入文字','');
+    if(s) strokes.push({t:'t',size:0.07,pts:[[n.x,n.y]],text:s}), draw();
+    return;
+  }
+  cur={t:(mode==='mosaic'?'m':'d'), size:brush, pts:[[n.x,n.y]]};
+  draw();
+},{passive:false});
+
+stage.addEventListener('touchmove',function(e){
+  if(!img)return;
+  e.preventDefault();
+  var n=norm(pos(e));
+  if(mode==='crop'){
+    if(!cropDrag||!lastN)return;
+    var ddx=n.x-lastN.x, ddy=n.y-lastN.y;
+    if(cropDrag===1){var nx=Math.max(0,Math.min(crop.x+crop.w-0.08,crop.x+ddx)); crop.w+=crop.x-nx; crop.x=nx;}
+    else if(cropDrag===2){crop.w=Math.max(0.08,Math.min(1-crop.x,n.x-crop.x));}
+    else if(cropDrag===3){var ny=Math.max(0,Math.min(crop.y+crop.h-0.08,crop.y+ddy)); crop.h+=crop.y-ny; crop.y=ny;}
+    else if(cropDrag===4){crop.h=Math.max(0.08,Math.min(1-crop.y,n.y-crop.y));}
+    else if(cropDrag===5){crop.x=Math.max(0,Math.min(1-crop.w,crop.x+ddx)); crop.y=Math.max(0,Math.min(1-crop.h,crop.y+ddy));}
+    lastN=n; draw(); return;
+  }
+  if(!cur)return;
+  var p=cur.pts[cur.pts.length-1];
+  if(Math.hypot(n.x-p[0],n.y-p[1])>0.004) cur.pts.push([n.x,n.y]);
+  draw();
+},{passive:false});
+
+function endStroke(e){
+  if(!img)return;
+  if(e&&e.cancelable)e.preventDefault();
+  if(mode==='crop'){cropDrag=0;return;}
+  if(cur){
+    strokes.push(cur);
+    cur=null;
+    draw();
+  }
+}
+stage.addEventListener('touchend',endStroke,{passive:false});
+stage.addEventListener('touchcancel',endStroke,{passive:false});
+document.addEventListener('gesturestart',function(e){e.preventDefault()});
+
+/* ---------- 按钮 ---------- */
+function setMode(m){
+  mode=m;
+  document.getElementById('bMosaic').classList.toggle('on',m==='mosaic');
+  document.getElementById('bDraw').classList.toggle('on',m==='draw');
+  document.getElementById('bText').classList.toggle('on',m==='text');
+  var bc=document.getElementById('bCrop');
+  bc.classList.toggle('on',m==='crop');
+  bc.textContent=(m==='crop')?'✓ 完成':'裁剪';
+  if(m==='mosaic')lastBrush=-1;
+  draw();
+}
+document.getElementById('bMosaic').onclick=function(){setMode('mosaic');document.querySelector('#top .t').textContent='马赛克'};
+document.getElementById('bDraw').onclick=function(){setMode('draw');document.querySelector('#top .t').textContent='涂黑'};
+document.getElementById('bText').onclick=function(){setMode('text');document.querySelector('#top .t').textContent='文字'};
+document.getElementById('bUndo').onclick=function(){
+  if(mode==='crop'){setMode('mosaic');document.querySelector('#top .t').textContent='马赛克';return;}
+  if(strokes.length){strokes.pop();draw();}
+};
+document.getElementById('segSize').onclick=function(e){
+  var b=e.target.closest('button'); if(!b)return;
+  [].forEach.call(this.children,function(c){c.classList.toggle('on',c===b)});
+  brush=parseFloat(b.dataset.v);
+  if(mode==='mosaic'){lastBrush=-1;}
+  draw();
+};
+document.getElementById('bRot').onclick=function(){
+  if(!img){toast('先选一张照片');return;}
+  var c=document.createElement('canvas');
+  c.width=img.height; c.height=img.width;
+  var g=c.getContext('2d');
+  g.translate(c.width/2,c.height/2); g.rotate(Math.PI/2);
+  g.drawImage(img,-img.width/2,-img.height/2);
+  img=c; strokes=[]; lastBrush=-1; fit(); draw(); toast('已旋转');
+};
+document.getElementById('bCrop').onclick=function(){
+  if(!img){toast('先选一张照片');return;}
+  if(mode!=='crop'){crop={x:0.04,y:0.04,w:0.92,h:0.92};setMode('crop');return;}
+  var w=Math.round(crop.w*img.width), h=Math.round(crop.h*img.height);
+  var x=Math.round(crop.x*img.width), y=Math.round(crop.y*img.height);
+  var c=document.createElement('canvas'); c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img,x,y,w,h,0,0,w,h);
+  img=c; strokes=[]; lastBrush=-1; setMode('mosaic');
+  document.querySelector('#top .t').textContent='马赛克';
+  fit(); draw(); toast('裁剪好了');
+};
+document.getElementById('add').onclick=function(){document.getElementById('picker').click()};
+document.getElementById('picker').onchange=function(e){
+  var f=e.target.files&&e.target.files[0]; if(!f)return;
+  var url=URL.createObjectURL(f);
+  var im=new Image();
+  im.onload=function(){
+    var m=Math.max(im.width,im.height), lim=2600;
+    var c=document.createElement('canvas');
+    if(m>lim){var k=lim/m;c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);}
+    else{c.width=im.width;c.height=im.height;}
+    c.getContext('2d').drawImage(im,0,0,c.width,c.height);
+    img=c; strokes=[]; cur=null; lastBrush=-1;
+    hint.classList.add('hide');
+    setMode('mosaic');
+    document.querySelector('#top .t').textContent='马赛克';
+    fit(); draw();
+    URL.revokeObjectURL(url);
+  };
+  im.onerror=function(){toast('这张图打不开');};
+  im.src=url;
+  e.target.value='';
+};
+
+/* ---------- 保存 ---------- */
+function render(){
+  var iw=img.width, ih=img.height;
+  var c=document.createElement('canvas'); c.width=iw; c.height=ih;
+  var g=c.getContext('2d');
+  g.drawImage(img,0,0);
+  var hasM=strokes.some(function(s){return s.t==='m'});
+  if(hasM){
+    var cell=Math.max(4, Math.round(iw*Math.max(brush,0.02)*0.55));
+    var tw=Math.max(1,Math.round(pwd/cell)), th=Math.max(1,Math.round(phd/cell));
+    var small=document.createElement('canvas'); small.width=tw; small.height=th;
+    small.getContext('2d').drawImage(img,0,0,tw,th);
+    var full=document.createElement('canvas'); full.width=iw; full.height=ih;
+    var fg=full.getContext('2d'); fg.imageSmoothingEnabled=false;
+    fg.drawImage(small,0,0,tw,th,0,0,iw,ih);
+    var mk=document.createElement('canvas'); mk.width=iw; mk.height=ih;
+    var mg=mk.getContext('2d');
+    mg.fillStyle=mg.strokeStyle='#fff'; mg.lineCap='round'; mg.lineJoin='round';
+    strokes.forEach(function(st){
+      if(st.t!=='m')return;
+      mg.lineWidth=st.size*iw;
+      mg.beginPath();
+      if(st.pts.length===1){mg.arc(st.pts[0][0]*iw,st.pts[0][1]*ih,st.size*iw/2,0,7);mg.fill();}
+      else{mg.moveTo(st.pts[0][0]*iw,st.pts[0][1]*ih);
+        for(var i=1;i<st.pts.length;i++)mg.lineTo(st.pts[i][0]*iw,st.pts[i][1]*ih);
+        mg.stroke();}
+    });
+    var mx=document.createElement('canvas'); mx.width=iw; mx.height=ih;
+    var xg=mx.getContext('2d');
+    xg.drawImage(full,0,0);
+    xg.globalCompositeOperation='destination-in';
+    xg.drawImage(mk,0,0);
+    g.drawImage(mx,0,0);
+  }
+  strokes.forEach(function(st){
+    if(st.t==='d'){
+      g.strokeStyle=g.fillStyle='#000'; g.lineCap='round'; g.lineJoin='round';
+      g.lineWidth=st.size*iw;
+      g.beginPath();
+      if(st.pts.length===1){g.arc(st.pts[0][0]*iw,st.pts[0][1]*ih,st.size*iw/2,0,7);g.fill();}
+      else{g.moveTo(st.pts[0][0]*iw,st.pts[0][1]*ih);
+        for(var i=1;i<st.pts.length;i++)g.lineTo(st.pts[i][0]*iw,st.pts[i][1]*ih);
+        g.stroke();}
+    }else if(st.t==='t'){
+      var fs=st.size*phd;
+      g.font='bold '+fs+'px -apple-system,"PingFang SC",sans-serif';
+      g.textAlign='center'; g.textBaseline='middle';
+      g.lineWidth=Math.max(2,fs*0.14); g.strokeStyle='rgba(0,0,0,.5)';
+      g.strokeText(st.text,st.pts[0][0]*iw,st.pts[0][1]*ih);
+      g.fillStyle='#fff'; g.fillText(st.text,st.pts[0][0]*iw,st.pts[0][1]*ih);
+    }
+  });
+  return c;
+}
+document.getElementById('bSave').onclick=function(){
+  if(!img){toast('先选一张照片');return;}
+  var c=render();
+  c.toBlob(function(b){
+    var url=URL.createObjectURL(b);
+    var a=document.createElement('a');
+    a.href=url; a.download='打码_'+Date.now()+'.jpg';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function(){URL.revokeObjectURL(url)},3000);
+    toast('已保存，去「照片」里看看');
+  },'image/jpeg',0.95);
+};
+
+resize();
+window.__rdy=1;
+window.__dbgInfo=function(){return {strokes: JSON.stringify(strokes.map(function(st){return {t:st.t,n:st.pts.length,p0:st.pts[0],size:st.size};})), view:view, cvw:cv.width, cvh:cv.height};};
+window.__state=function(){return {n:strokes.length, cur:cur?cur.t:null, mode:mode, view:view, iw:img?img.width:0, ih:img?img.height:0};};
+})();
+</script>
+</body>
+</html>
