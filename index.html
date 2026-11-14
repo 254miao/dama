@@ -119,10 +119,11 @@ document.getElementById('dlgOk').onclick=function(){document.getElementById('mas
 function resize(){
   var r=stage.getBoundingClientRect();
   W=r.width; H=r.height;
-  cv.width=Math.round(W); cv.height=Math.round(H);
+  var dpr2=Math.min(window.devicePixelRatio||1,3);
+  cv.width=Math.round(W*dpr2); cv.height=Math.round(H*dpr2);
   cvPixW=cv.width; cvPixH=cv.height;
   cv.style.width=W+'px'; cv.style.height=H+'px';
-  ctx.setTransform(1,0,0,1,0,0);
+  ctx.setTransform(dpr2,0,0,dpr2,0,0);
   fit(); draw();
 }
 function fit(){
@@ -170,10 +171,13 @@ function ptPath(g, st, iw, ih){
 }
 
 function draw(){
-  ctx.setTransform(1,0,0,1,0,0);
-  ctx.clearRect(0,0,cv.width,cv.height);
+  var k=window.devicePixelRatio>3?3:(window.devicePixelRatio||1);
+  ctx.setTransform(k,0,0,k,0,0);
+  ctx.clearRect(0,0,W,H);
   if(!img)return;
   var iw=img.width*view.s, ih=img.height*view.s;
+  ctx.imageSmoothingEnabled=true;
+  ctx.imageSmoothingQuality='high';
   ctx.drawImage(img, view.x, view.y, iw, ih);
 
   // ---------- 马赛克: 对已经画好的画布做局部块平均 ----------
