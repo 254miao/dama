@@ -313,6 +313,7 @@ function norm(p){
 
 stage.addEventListener('touchstart',function(e){
   if(!img)return;
+  if(e.touches && e.touches.length>1) { cur=null; return; }   // 多指不画
   e.preventDefault();
   var n=norm(pos(e)); lastN=n;
   if(mode==='crop'){
@@ -329,7 +330,7 @@ stage.addEventListener('touchstart',function(e){
     if(s) strokes.push({t:'t',size:0.07,pts:[[n.x,n.y]],text:s}), draw();
     return;
   }
-  cur={t:(mode==='mosaic'?'m':'d'), size:brush, pts:[[n.x,n.y]]};
+  cur={t:(mode==='mosaic'?'m':'d'), size:brush, pts:[[n.x,n.y]], moved:0};
   draw();
 },{passive:false});
 
@@ -349,7 +350,11 @@ stage.addEventListener('touchmove',function(e){
   }
   if(!cur)return;
   var p=cur.pts[cur.pts.length-1];
-  if(Math.hypot(n.x-p[0],n.y-p[1])>0.004) cur.pts.push([n.x,n.y]);
+  var d=Math.hypot(n.x-p[0],n.y-p[1]);
+  if(d>0.008){                       // 抖动过滤: 太小不动
+    cur.pts.push([n.x,n.y]);
+    cur.moved=(cur.moved||0)+d;
+  }
   draw();
 },{passive:false});
 
@@ -358,7 +363,10 @@ function endStroke(e){
   if(e&&e.cancelable)e.preventDefault();
   if(mode==='crop'){cropDrag=0;return;}
   if(cur){
-    strokes.push(cur);
+    // 只点了一下没拖动 -> 不算画一笔, 避免误触留下圆点
+    if((cur.moved||0) > 0.012 || (cur.pts.length===1 && cur.t==='d')){
+      strokes.push(cur);
+    }
     cur=null;
     draw();
   }
@@ -419,10 +427,9 @@ document.getElementById('picker').onchange=function(e){
   var url=URL.createObjectURL(f);
   var im=new Image();
   im.onload=function(){
-    var m=Math.max(im.width,im.height), lim=2600;
+    // 保留原图完整分辨率
     var c=document.createElement('canvas');
-    if(m>lim){var k=lim/m;c.width=Math.round(im.width*k);c.height=Math.round(im.height*k);}
-    else{c.width=im.width;c.height=im.height;}
+    c.width=im.naturalWidth||im.width; c.height=im.naturalHeight||im.height;
     c.getContext('2d').drawImage(im,0,0,c.width,c.height);
     img=c; strokes=[]; cur=null; lastBrush=-1;
     hint.classList.add('hide');
@@ -444,8 +451,8 @@ function render(){
   g.drawImage(img,0,0);
   var hasM=strokes.some(function(s){return s.t==='m'});
   if(hasM){
-    var cell=Math.max(4, Math.round(iw*Math.max(brush,0.02)*0.55));
-    var tw=Math.max(1,Math.round(pwd/cell)), th=Math.max(1,Math.round(phd/cell));
+    var cell=Math.max(6, Math.round(iw*0.03));   // 与预览一致: 图宽的 3%
+    var tw=Math.max(1,Math.round(iw/cell)), th=Math.max(1,Math.round(ih/cell));
     var small=document.createElement('canvas'); small.width=tw; small.height=th;
     small.getContext('2d').drawImage(img,0,0,tw,th);
     var full=document.createElement('canvas'); full.width=iw; full.height=ih;
@@ -456,7 +463,7 @@ function render(){
     mg.fillStyle=mg.strokeStyle='#fff'; mg.lineCap='round'; mg.lineJoin='round';
     strokes.forEach(function(st){
       if(st.t!=='m')return;
-      mg.lineWidth=st.size*iw;
+      mg.lineWidth=st.size*iw*1.05;
       mg.beginPath();
       if(st.pts.length===1){mg.arc(st.pts[0][0]*iw,st.pts[0][1]*ih,st.size*iw/2,0,7);mg.fill();}
       else{mg.moveTo(st.pts[0][0]*iw,st.pts[0][1]*ih);
@@ -480,7 +487,7 @@ function render(){
         for(var i=1;i<st.pts.length;i++)g.lineTo(st.pts[i][0]*iw,st.pts[i][1]*ih);
         g.stroke();}
     }else if(st.t==='t'){
-      var fs=st.size*phd;
+      var fs=st.size*ih;
       g.font='bold '+fs+'px -apple-system,"PingFang SC",sans-serif';
       g.textAlign='center'; g.textBaseline='middle';
       g.lineWidth=Math.max(2,fs*0.14); g.strokeStyle='rgba(0,0,0,.5)';
@@ -492,15 +499,47 @@ function render(){
 }
 document.getElementById('bSave').onclick=function(){
   if(!img){toast('先选一张照片');return;}
+  toast('正在处理…');
+  // 让浏览器先把提示画出来, 再做大图合成
+  setTimeout(function(){
   var c=render();
   c.toBlob(function(b){
     var url=URL.createObjectURL(b);
+    // iOS/Safari: 没有"下载到相册"的接口, 用图片预览 + 长按保存
+    var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
+    if(isIOS){
+      // 开一个全屏图片层, 提示长按保存
+      var mask=document.createElement('div');
+      mask.id='savemask';
+      mask.style.cssText='position:fixed;inset:0;background:#000;z-index:99;display:flex;flex-direction:column';
+      var bar=document.createElement('div');
+      bar.style.cssText='padding:14px 16px;padding-top:calc(14px + env(safe-area-inset-top));display:flex;justify-content:space-between;align-items:center;color:#fff;font-size:15px';
+      bar.innerHTML='<span>长按图片 → 存储到照片</span>';
+      var close=document.createElement('button');
+      close.textContent='完成';
+      close.style.cssText='border:0;background:#0a84ff;color:#fff;height:34px;padding:0 16px;border-radius:17px;font-size:15px;font-weight:600';
+      close.onclick=function(){ mask.remove(); URL.revokeObjectURL(url); };
+      bar.appendChild(close);
+      var wrap=document.createElement('div');
+      wrap.style.cssText='flex:1;display:flex;align-items:center;justify-content:center;padding:10px;overflow:auto';
+      var im2=document.createElement('img');
+      im2.src=url;
+      im2.style.cssText='max-width:100%;max-height:100%;-webkit-touch-callout:default;user-select:auto;-webkit-user-select:auto';
+      wrap.appendChild(im2);
+      mask.appendChild(bar); mask.appendChild(wrap);
+      document.body.appendChild(mask);
+      toast('长按图片保存到相册');
+      return;
+    }
+    // 其他浏览器: 直接下载
     var a=document.createElement('a');
     a.href=url; a.download='打码_'+Date.now()+'.jpg';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(function(){URL.revokeObjectURL(url)},3000);
-    toast('已保存，去「照片」里看看');
-  },'image/jpeg',0.95);
+    toast('已保存');
+  },'image/jpeg',0.98);
+  }, 50);
 };
 
 resize();
